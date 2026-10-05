@@ -12101,6 +12101,26 @@ function _bindThinkingTailFollow(body, atTail){
     body._thinkingTailFollow=room-(Number(body.scrollTop)||0)<=_THINKING_TAIL_STICK_PX;
   },{passive:true});
 }
+function _toggleThinkingCard(card){
+  if(!card||!card.classList) return;
+  const opening=!card.classList.contains('open');
+  card.classList.toggle('open', opening);
+  if(!opening) return;
+  // Just opened: make tail-follow state reflect the reader's real position.
+  // A body that was following before a collapse resumes at the tail; a body
+  // opening at the top holds there — a wheel-up at scrollTop 0 fires no scroll
+  // event, so without this seed the latch would stay on and the next delta
+  // would yank the reader to the bottom (#7988 review).
+  const body=card.querySelector?card.querySelector('.thinking-card-body'):null;
+  if(!body) return;
+  if(body._thinkingTailFollow===true){
+    body.scrollTop=Math.max(0,(Number(body.scrollHeight)||0)-(Number(body.clientHeight)||0));
+    return;
+  }
+  if(body._thinkingTailFollow===undefined&&typeof _bindThinkingTailFollow==='function'){
+    _bindThinkingTailFollow(body, _worklogDetailBodyAtTail(body));
+  }
+}
 function _worklogDetailBodyAtTail(body){
   if(!body) return true;
   if(body._thinkingTailFollow===true) return true;
@@ -12190,7 +12210,10 @@ function _restoreWorklogDetailDisclosureState(root, state){
         // the DOM was rebuilt. Readers who had scrolled up get their absolute
         // offset replayed.
         if(hasFollow&&typeof _bindThinkingTailFollow==='function') _bindThinkingTailFollow(body, atBottom);
-        if(atBottom){
+        // The re-pin reads scrollHeight; skip it on a collapsed card (the tail
+        // read forces a layout) — _toggleThinkingCard re-pins on open.
+        const elOpen=!el.classList||el.classList.contains('open');
+        if(atBottom&&elOpen){
           body.scrollTop=Math.max(0, body.scrollHeight-body.clientHeight);
         }else if(Number.isFinite(scrollTop)&&scrollTop>0){
           body.scrollTop=Math.min(scrollTop, Math.max(0, body.scrollHeight-body.clientHeight));
@@ -12204,7 +12227,7 @@ function _thinkingCardHtml(text, open){
   const copyBtn=`<button class="thinking-copy-btn" onclick="event.stopPropagation();_copyThinkingText(this)" title="${t('copy')}" aria-label="${t('copy')}">${li('copy',12)}</button>`;
   const shouldOpen=!!open||_worklogDetailsExpandedDefault();
   const classes=`thinking-card${shouldOpen?' open':''}`;
-  return `<div class="${classes}"><div class="thinking-card-header" onclick="this.parentElement.classList.toggle('open')"><span class="thinking-card-icon">${li('lightbulb',14)}</span><span class="thinking-card-label">${t('thinking')}</span><span class="thinking-card-btn-row">${copyBtn}<span class="thinking-card-toggle">${li('chevron-right',12)}</span></span></div><div class="thinking-card-body"><pre>${esc(clean)}</pre></div></div>`;
+  return `<div class="${classes}"><div class="thinking-card-header" onclick="_toggleThinkingCard(this.parentElement)"><span class="thinking-card-icon">${li('lightbulb',14)}</span><span class="thinking-card-label">${t('thinking')}</span><span class="thinking-card-btn-row">${copyBtn}<span class="thinking-card-toggle">${li('chevron-right',12)}</span></span></div><div class="thinking-card-body"><pre>${esc(clean)}</pre></div></div>`;
 }
 function isSimplifiedToolCalling(){
   return window._simplifiedToolCalling!==false;
@@ -14454,11 +14477,14 @@ function _refreshTransparentThinkingLiveRow(existing, node){
   const nodePre = node.querySelector('.thinking-card-body pre');
   if(!existingPre || !nodePre) return false;
   const thinkingBody = existingPre.closest ? existingPre.closest('.thinking-card-body') : null;
-  // Same tail-follow rule as _renderThinkingInto: only live thinking rows may
-  // seed the follow latch or move their body to the tail.
+  // Same tail-follow rule as _renderThinkingInto: only LIVE, OPEN thinking
+  // rows may seed the follow latch or move their body to the tail (a
+  // collapsed body's tail read would force a layout per delta).
   const thinkingLive = typeof _thinkingRowIsLive==='function'?_thinkingRowIsLive(existing):true;
-  if(thinkingBody&&thinkingLive&&typeof _bindThinkingTailFollow==='function') _bindThinkingTailFollow(thinkingBody);
-  const thinkingFollow = thinkingBody&&thinkingLive&&thinkingBody._thinkingTailFollow!==false;
+  const thinkingCard = thinkingBody&&thinkingBody.closest?thinkingBody.closest('.thinking-card'):null;
+  const thinkingOpen = !thinkingCard||(thinkingCard.classList&&thinkingCard.classList.contains('open'));
+  if(thinkingBody&&thinkingLive&&thinkingOpen&&typeof _bindThinkingTailFollow==='function') _bindThinkingTailFollow(thinkingBody);
+  const thinkingFollow = thinkingBody&&thinkingLive&&thinkingOpen&&thinkingBody._thinkingTailFollow!==false;
   const nextText = String(nodePre.textContent || '');
   if(existingPre.textContent !== nextText){
     existingPre.textContent = nextText;
@@ -18782,7 +18808,7 @@ function renderMessages(options){
             // Echoed reasoning already rendered for this turn — skip the duplicate.
           }else{
             if(_thinkKey)_seen.add(_thinkKey);
-            const thinkingRow=_decorateTransparentEventRow(_thinkingActivityNode(event.thinkingText,false,null,true),{
+            const thinkingRow=_decorateTransparentEventRow(_thinkingActivityNode(event.thinkingText,false,null,false),{
               type:'thinking',
               text:event.thinkingText,
               preview:event.thinkingText,
@@ -21119,7 +21145,7 @@ function _thinkingMarkup(text=''){
   const clean=_sanitizeThinkingDisplayText(text);
   const openClass=_worklogDetailsExpandedDefault()?' open':'';
   return (clean&&String(clean).trim())
-    ? `<div class="thinking-card${openClass}"><div class="thinking-card-header" onclick="this.parentElement.classList.toggle('open')"><span class="thinking-card-icon">${li('lightbulb',14)}</span><span class="thinking-card-label">${t('thinking')}</span><span class="thinking-card-toggle">${li('chevron-right',12)}</span></div><div class="thinking-card-body"><pre>${esc(String(clean).trim())}</pre></div></div>`
+    ? `<div class="thinking-card${openClass}"><div class="thinking-card-header" onclick="_toggleThinkingCard(this.parentElement)"><span class="thinking-card-icon">${li('lightbulb',14)}</span><span class="thinking-card-label">${t('thinking')}</span><span class="thinking-card-toggle">${li('chevron-right',12)}</span></div><div class="thinking-card-body"><pre>${esc(String(clean).trim())}</pre></div></div>`
     : `<div class="thinking"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>`;
 }
 function _renderThinkingInto(row,text=''){
@@ -21137,8 +21163,14 @@ function _renderThinkingInto(row,text=''){
     // write must never seed the follow latch or the next rebuild would jump a
     // settled top-of-card reader to the bottom.
     const live=typeof _thinkingRowIsLive==='function'?_thinkingRowIsLive(row):true;
-    if(body&&live&&typeof _bindThinkingTailFollow==='function') _bindThinkingTailFollow(body);
-    const follow=body&&live&&body._thinkingTailFollow!==false;
+    // Collapsed cards neither bind nor pin: the tail read forces a layout on
+    // every delta (#7988 review) and the reader cannot see the stream anyway.
+    // A body that opens later seeds its follow state from its real position
+    // in _toggleThinkingCard.
+    const card=body&&body.closest?body.closest('.thinking-card'):null;
+    const open=!card||(card.classList&&card.classList.contains('open'));
+    if(body&&live&&open&&typeof _bindThinkingTailFollow==='function') _bindThinkingTailFollow(body);
+    const follow=body&&live&&open&&body._thinkingTailFollow!==false;
     const changed=pre.textContent!==clean;
     pre.textContent=clean;
     if(follow&&changed) body.scrollTop=Math.max(0,(Number(body.scrollHeight)||0)-(Number(body.clientHeight)||0));
@@ -21159,6 +21191,7 @@ function finalizeThinkingCard(){
       row.removeAttribute('id');
       row.removeAttribute('data-thinking-active');
       row.removeAttribute('data-live-thinking');
+      row.removeAttribute('data-live-thinking-row');
     }
     return;
   }
@@ -21192,6 +21225,7 @@ function finalizeThinkingCard(){
     turn.querySelectorAll('.agent-activity-thinking[data-thinking-active="1"]').forEach(active=>{
       active.removeAttribute('data-thinking-active');
       active.removeAttribute('data-live-thinking');
+      active.removeAttribute('data-live-thinking-row');
     });
     _syncToolCallGroupSummary(group);
   }
@@ -21267,6 +21301,7 @@ function appendThinking(text='', options){
             el.removeAttribute('id');
             el.removeAttribute('data-thinking-active');
             el.removeAttribute('data-live-thinking');
+            el.removeAttribute('data-live-thinking-row');
           }
         });
         row.setAttribute('data-thinking-active','1');
@@ -21314,6 +21349,7 @@ function appendThinking(text='', options){
           if(el!==row){
             el.removeAttribute('data-thinking-active');
             el.removeAttribute('data-live-thinking');
+            el.removeAttribute('data-live-thinking-row');
           }
         });
         row.setAttribute('data-thinking-active','1');
@@ -21336,6 +21372,7 @@ function removeThinking(){
       row.removeAttribute('id');
       row.removeAttribute('data-thinking-active');
       row.removeAttribute('data-live-thinking');
+      row.removeAttribute('data-live-thinking-row');
     });
     if(liveTurn&&blocks&&!blocks.children.length) liveTurn.remove();
     return;

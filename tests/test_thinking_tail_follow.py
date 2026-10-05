@@ -185,7 +185,7 @@ if(!sel) throw new Error('_worklogDetailDisclosureSelector not found in ui.js');
 globalThis._worklogDetailDisclosureSelector=sel[1];
 
 for(const name of [
-  '_bindThinkingTailFollow','_worklogDetailBodyAtTail','_thinkingRowIsLive',
+  '_bindThinkingTailFollow','_worklogDetailBodyAtTail','_thinkingRowIsLive','_toggleThinkingCard',
   '_worklogDetailTextKey','_worklogDetailBaseKey',
   '_worklogDetailDisclosureIsOpen','_worklogDetailScrollableBody',
   '_setWorklogDetailDisclosureOpen','_worklogDetailDisclosureKeyForElement',
@@ -400,7 +400,49 @@ const out={};
   out.s9_tail_replayed_scroll=d.body.scrollTop;
 }
 
-console.log(JSON.stringify(out));
+// ── S10: collapsed cards never bind/pin; opening seeds from position ────────
+{
+  const {row,card,body}=makeThinkingRow('thinking', true);
+  card.classList.remove('open');
+  body.clientHeight=0;
+  body.scrollTop=0;
+  let reads=0;
+  Object.defineProperty(body,'scrollHeight',{get(){reads+=1;return this._scrollHeight;},configurable:true});
+  body._scrollHeight=200;
+  _renderThinkingInto(row,'thinking grew while collapsed');
+  body._scrollHeight=800;
+  _renderThinkingInto(row,'thinking grew again while collapsed');
+  out.s10_scroll_reads=reads;
+  out.s10_latch_seeded=body._thinkingTailFollow!==undefined;
+  out.s10_scroll=body.scrollTop;
+  // Opening at the top seeds a hold — the next delta must not yank the reader.
+  _toggleThinkingCard(card);
+  out.s10_open=card.classList.contains('open');
+  out.s10_latch=body._thinkingTailFollow===false?'held':String(body._thinkingTailFollow);
+  body.clientHeight=200;
+  body._scrollHeight=1000;
+  _renderThinkingInto(row,'thinking grew after open');
+  out.s10_after_write_scroll=body.scrollTop;
+}
+
+// ── S11: collapse then expand mid-stream keeps following ────────────────────
+{
+  const {row,card,body}=makeThinkingRow('thinking', true);
+  body.scrollHeight=800;
+  _renderThinkingInto(row,'thinking');
+  _renderThinkingInto(row,'thinking longer');
+  out.s11_before_collapse_scroll=body.scrollTop;
+  _toggleThinkingCard(card);
+  out.s11_collapsed=!card.classList.contains('open');
+  body.scrollHeight=1000;
+  _renderThinkingInto(row,'thinking grew while collapsed');
+  out.s11_collapse_scroll=body.scrollTop;
+  _toggleThinkingCard(card);
+  out.s11_after_expand_scroll=body.scrollTop;
+  out.s11_latch=String(body._thinkingTailFollow);
+}
+
+console.log(JSON.stringify(out, null, 2));
 """
 
 
@@ -513,3 +555,44 @@ def test_tool_detail_keeps_absolute_offset_across_rebuilds():
     assert out["s9_restored_scroll"] == 300
     assert out["s9_latch"] == "none"
     assert out["s9_tail_replayed_scroll"] == 600
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_collapsed_card_opens_at_top_without_a_yank():
+    out = _run_scenarios()
+
+    # While collapsed: no latch, no pin, and no forced layout (no scrollHeight
+    # reads at all) across deltas.
+    assert out["s10_scroll_reads"] == 0
+    assert out["s10_latch_seeded"] is False
+    assert out["s10_scroll"] == 0
+    # Opening seeds the latch from the real position: at the top of a long
+    # card that is a hold, and the next delta must not move the reader.
+    assert out["s10_open"] is True
+    assert out["s10_latch"] == "held"
+    assert out["s10_after_write_scroll"] == 0
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_collapse_and_expand_mid_stream_keeps_following():
+    out = _run_scenarios()
+
+    assert out["s11_before_collapse_scroll"] == 600
+    assert out["s11_collapsed"] is True
+    # No pin while collapsed (the body stays where it was)...
+    assert out["s11_collapse_scroll"] == 600
+    # ...and expanding resumes follow at the new tail.
+    assert out["s11_after_expand_scroll"] == 800
+    assert out["s11_latch"] == "true"
+
+
+def test_live_marker_is_cleared_at_settlement():
+    src = (Path(__file__).resolve().parents[1] / "static" / "ui.js").read_text()
+
+    # Every row-level settlement/demotion strip that clears data-live-thinking
+    # must also clear data-live-thinking-row, or _thinkingRowIsLive stays true
+    # on persisted cards (#7988 review).
+    strips = src.count("removeAttribute('data-live-thinking')")
+    live_row_strips = src.count("removeAttribute('data-live-thinking-row')")
+    assert strips >= 5
+    assert live_row_strips == strips
