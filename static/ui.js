@@ -12202,25 +12202,37 @@ function _bindThinkingTailFollow(body, atTail){
     body._thinkingTailFollow=room-(Number(body.scrollTop)||0)<=_THINKING_TAIL_STICK_PX;
   },{passive:true});
 }
+function _thinkingCardOpened(card){
+  // Shared by _toggleThinkingCard and _setTransparentCardOpen. The open
+  // transition animates the body height from zero, so measuring immediately
+  // classifies even a card that will fit when fully open as away from the tail
+  // (#7988 review) — settle the follow state once the layout is stable. Until
+  // then the latch stays unset and no write may pin (follow requires ===true).
+  const body=card&&card.querySelector?card.querySelector('.thinking-card-body'):null;
+  if(!body) return;
+  const wasFollowing=body._thinkingTailFollow===true;
+  let done=false;
+  const settle=()=>{
+    if(done) return;
+    done=true;
+    if(typeof body.removeEventListener==='function') body.removeEventListener('transitionend', settle);
+    if(wasFollowing){
+      body.scrollTop=Math.max(0,(Number(body.scrollHeight)||0)-(Number(body.clientHeight)||0));
+      return;
+    }
+    if(body._thinkingTailFollow===undefined&&typeof _bindThinkingTailFollow==='function'){
+      _bindThinkingTailFollow(body, _worklogDetailBodyAtTail(body));
+    }
+  };
+  if(typeof body.addEventListener==='function') body.addEventListener('transitionend', settle);
+  // Fallback when no transition runs (reduced motion, no CSS transition).
+  if(typeof setTimeout==='function') setTimeout(settle, 350);
+}
 function _toggleThinkingCard(card){
   if(!card||!card.classList) return;
   const opening=!card.classList.contains('open');
   card.classList.toggle('open', opening);
-  if(!opening) return;
-  // Just opened: make tail-follow state reflect the reader's real position.
-  // A body that was following before a collapse resumes at the tail; a body
-  // opening at the top holds there — a wheel-up at scrollTop 0 fires no scroll
-  // event, so without this seed the latch would stay on and the next delta
-  // would yank the reader to the bottom (#7988 review).
-  const body=card.querySelector?card.querySelector('.thinking-card-body'):null;
-  if(!body) return;
-  if(body._thinkingTailFollow===true){
-    body.scrollTop=Math.max(0,(Number(body.scrollHeight)||0)-(Number(body.clientHeight)||0));
-    return;
-  }
-  if(body._thinkingTailFollow===undefined&&typeof _bindThinkingTailFollow==='function'){
-    _bindThinkingTailFollow(body, _worklogDetailBodyAtTail(body));
-  }
+  if(opening) _thinkingCardOpened(card);
 }
 function _worklogDetailBodyAtTail(body){
   if(!body) return true;
@@ -12682,6 +12694,7 @@ function _setTransparentCardOpen(card, open){
     _materializeTransparentToolDetail(row);
   }
   card.classList.toggle('open',expanded);
+  if(expanded&&typeof _thinkingCardOpened==='function') _thinkingCardOpened(card);
   if(row) row.setAttribute('data-expanded',expanded?'1':'0');
   const header=card.querySelector('.tool-card-header,.thinking-card-header');
   if(header) header.setAttribute('aria-expanded',expanded?'true':'false');
@@ -14585,7 +14598,7 @@ function _refreshTransparentThinkingLiveRow(existing, node){
   const thinkingCard = thinkingBody&&thinkingBody.closest?thinkingBody.closest('.thinking-card'):null;
   const thinkingOpen = !thinkingCard||(thinkingCard.classList&&thinkingCard.classList.contains('open'));
   if(thinkingBody&&thinkingLive&&thinkingOpen&&typeof _bindThinkingTailFollow==='function') _bindThinkingTailFollow(thinkingBody);
-  const thinkingFollow = thinkingBody&&thinkingLive&&thinkingOpen&&thinkingBody._thinkingTailFollow!==false;
+  const thinkingFollow = thinkingBody&&thinkingLive&&thinkingOpen&&thinkingBody._thinkingTailFollow===true;
   const nextText = String(nodePre.textContent || '');
   if(existingPre.textContent !== nextText){
     existingPre.textContent = nextText;
@@ -21271,7 +21284,7 @@ function _renderThinkingInto(row,text=''){
     const card=body&&body.closest?body.closest('.thinking-card'):null;
     const open=!card||(card.classList&&card.classList.contains('open'));
     if(body&&live&&open&&typeof _bindThinkingTailFollow==='function') _bindThinkingTailFollow(body);
-    const follow=body&&live&&open&&body._thinkingTailFollow!==false;
+    const follow=body&&live&&open&&body._thinkingTailFollow===true;
     const changed=pre.textContent!==clean;
     pre.textContent=clean;
     if(follow&&changed) body.scrollTop=Math.max(0,(Number(body.scrollHeight)||0)-(Number(body.clientHeight)||0));

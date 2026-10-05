@@ -132,8 +132,15 @@ class FakeElement {
   addEventListener(name, fn){
     (this._listeners[name]||(this._listeners[name]=[])).push(fn);
   }
+  removeEventListener(name, fn){
+    const list=this._listeners[name]||[];
+    const idx=list.indexOf(fn);
+    if(idx>=0) list.splice(idx,1);
+  }
   // Simulate a native scroll event (user drag or programmatic settle).
   fireScroll(){ (this._listeners['scroll']||[]).forEach(fn=>fn({type:'scroll',target:this})); }
+  // Simulate the end of the card open transition (layout is now stable).
+  fireTransitionEnd(){ (this._listeners['transitionend']||[]).forEach(fn=>fn({type:'transitionend',target:this})); }
 }
 
 function matchesSelector(el, selector){
@@ -185,7 +192,7 @@ if(!sel) throw new Error('_worklogDetailDisclosureSelector not found in ui.js');
 globalThis._worklogDetailDisclosureSelector=sel[1];
 
 for(const name of [
-  '_bindThinkingTailFollow','_worklogDetailBodyAtTail','_thinkingRowIsLive','_toggleThinkingCard',
+  '_bindThinkingTailFollow','_worklogDetailBodyAtTail','_thinkingRowIsLive','_toggleThinkingCard','_thinkingCardOpened','_setTransparentCardOpen',
   '_worklogDetailTextKey','_worklogDetailBaseKey',
   '_worklogDetailDisclosureIsOpen','_worklogDetailScrollableBody',
   '_setWorklogDetailDisclosureOpen','_worklogDetailDisclosureKeyForElement',
@@ -415,8 +422,10 @@ const out={};
   out.s10_scroll_reads=reads;
   out.s10_latch_seeded=body._thinkingTailFollow!==undefined;
   out.s10_scroll=body.scrollTop;
-  // Opening at the top seeds a hold — the next delta must not yank the reader.
+  // Opening at the top seeds a hold once the open animation settles — the
+  // next delta must not yank the reader.
   _toggleThinkingCard(card);
+  body.fireTransitionEnd();
   out.s10_open=card.classList.contains('open');
   out.s10_latch=body._thinkingTailFollow===false?'held':String(body._thinkingTailFollow);
   body.clientHeight=200;
@@ -438,8 +447,35 @@ const out={};
   _renderThinkingInto(row,'thinking grew while collapsed');
   out.s11_collapse_scroll=body.scrollTop;
   _toggleThinkingCard(card);
+  body.fireTransitionEnd();
   out.s11_after_expand_scroll=body.scrollTop;
   out.s11_latch=String(body._thinkingTailFollow);
+}
+
+// ── S12: the transparent-card open handler seeds follow state too ───────────
+{
+  // A long live card opened at the top via _setTransparentCardOpen must hold.
+  const a=makeThinkingRow('thinking', true);
+  a.card.classList.remove('open');
+  a.body.clientHeight=0;
+  a.body.scrollHeight=1000;
+  _setTransparentCardOpen(a.card, true);
+  a.body.fireTransitionEnd();
+  out.s12_open_latch=a.body._thinkingTailFollow===false?'held':String(a.body._thinkingTailFollow);
+  a.body.clientHeight=200;
+  _renderThinkingInto(a.row,'thinking grew after transparent open');
+  out.s12_after_write_scroll=a.body.scrollTop;
+  // A body that was following re-pins at the tail when reopened.
+  const b=makeThinkingRow('thinking', true);
+  b.body.scrollHeight=800;
+  _renderThinkingInto(b.row,'thinking');
+  _renderThinkingInto(b.row,'thinking longer');
+  _setTransparentCardOpen(b.card, false);
+  b.body.scrollHeight=1000;
+  _setTransparentCardOpen(b.card, true);
+  b.body.fireTransitionEnd();
+  out.s12_reopen_scroll=b.body.scrollTop;
+  out.s12_reopen_latch=String(b.body._thinkingTailFollow);
 }
 
 console.log(JSON.stringify(out, null, 2));
@@ -571,6 +607,20 @@ def test_collapsed_card_opens_at_top_without_a_yank():
     assert out["s10_open"] is True
     assert out["s10_latch"] == "held"
     assert out["s10_after_write_scroll"] == 0
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_transparent_open_handler_seeds_follow_state():
+    out = _run_scenarios()
+
+    # _setTransparentCardOpen must run the same open-time settling as the
+    # inline toggle: opened at the top of a long card that is a hold, and the
+    # next delta must not yank the reader.
+    assert out["s12_open_latch"] == "held"
+    assert out["s12_after_write_scroll"] == 0
+    # A body that was following re-pins at the tail when reopened.
+    assert out["s12_reopen_scroll"] == 800
+    assert out["s12_reopen_latch"] == "true"
 
 
 @pytest.mark.skipif(NODE is None, reason="node not on PATH")
