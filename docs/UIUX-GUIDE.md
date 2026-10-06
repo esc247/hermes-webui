@@ -79,6 +79,13 @@ not raw debug detail. Compact Activity may collapse tool arguments, long tool
 results, and low-level reasoning detail, but it must not make concise
 user-visible progress text available only inside a collapsed disclosure.
 
+A live Thinking card follows its own tail while reasoning streams: new text
+scrolls into view when the card is open at its bottom, exactly like the message
+pane. Scrolling up inside the card holds the reader's place (follow resumes on
+returning to the bottom), and collapsing the card mid-stream pauses the inner
+follow — expanding again restores it. Settled history cards never auto-scroll;
+they open at the top like any other persisted content.
+
 Automatic compression is a live-only context barrier, not a special branded
 tool card. Render it as a centered, non-interactive divider with quiet horizontal
 rules: `Compressing context` while the compression barrier is active and

@@ -478,6 +478,36 @@ const out={};
   out.s12_reopen_latch=String(b.body._thinkingTailFollow);
 }
 
+// ── S13: no delayed pin after the reader scrolls up; no re-arm when open ────
+{
+  // Re-applying open on an already-open card (the rehydrate path) must not
+  // arm a delayed settle at all.
+  const a=makeThinkingRow('thinking', true);
+  a.body.scrollHeight=800;
+  _renderThinkingInto(a.row,'thinking');
+  _renderThinkingInto(a.row,'thinking longer');
+  const before=(a.body._listeners['transitionend']||[]).length;
+  _setTransparentCardOpen(a.card, true);
+  out.s13_rearmed=((a.body._listeners['transitionend']||[]).length>before);
+  // A scroll-up between arm and settle must win: settle re-checks the latch
+  // at fire time instead of pinning from the armed value. Faithful repro: a
+  // body that was following, collapsed, reopened, then scrolled up before the
+  // open animation settles.
+  const c=makeThinkingRow('thinking', true);
+  c.body.scrollHeight=800;
+  _renderThinkingInto(c.row,'thinking');
+  _renderThinkingInto(c.row,'thinking longer');
+  _toggleThinkingCard(c.card);
+  c.body.scrollHeight=1000;
+  _renderThinkingInto(c.row,'thinking grew while collapsed');
+  _toggleThinkingCard(c.card);
+  c.body.scrollTop=0;
+  c.body.fireScroll();
+  out.s13_latch_after_scrollup=c.body._thinkingTailFollow===false?'held':String(c.body._thinkingTailFollow);
+  c.body.fireTransitionEnd();
+  out.s13_scroll_after_settle=c.body.scrollTop;
+}
+
 console.log(JSON.stringify(out, null, 2));
 """
 
@@ -621,6 +651,18 @@ def test_transparent_open_handler_seeds_follow_state():
     # A body that was following re-pins at the tail when reopened.
     assert out["s12_reopen_scroll"] == 800
     assert out["s12_reopen_latch"] == "true"
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_no_delayed_pin_after_scroll_up_and_no_rearm_when_open():
+    out = _run_scenarios()
+
+    # The rehydrate path re-applies open on every refresh: it must not arm a
+    # delayed settle on an already-open card.
+    assert out["s13_rearmed"] is False
+    # A scroll-up between arm and settle wins over the armed pin.
+    assert out["s13_latch_after_scrollup"] == "held"
+    assert out["s13_scroll_after_settle"] == 0
 
 
 @pytest.mark.skipif(NODE is None, reason="node not on PATH")

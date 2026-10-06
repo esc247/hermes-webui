@@ -12210,18 +12210,20 @@ function _thinkingCardOpened(card){
   // then the latch stays unset and no write may pin (follow requires ===true).
   const body=card&&card.querySelector?card.querySelector('.thinking-card-body'):null;
   if(!body) return;
-  const wasFollowing=body._thinkingTailFollow===true;
   let done=false;
   const settle=()=>{
     if(done) return;
     done=true;
     if(typeof body.removeEventListener==='function') body.removeEventListener('transitionend', settle);
-    if(wasFollowing){
-      body.scrollTop=Math.max(0,(Number(body.scrollHeight)||0)-(Number(body.clientHeight)||0));
-      return;
-    }
+    // Re-check at fire time, not at arm time: a scroll between open and
+    // settle (or a refresh that re-armed this on an already-open card) must
+    // not yank the reader (#7988 review). Seed only if still unset, pin only
+    // if still following.
     if(body._thinkingTailFollow===undefined&&typeof _bindThinkingTailFollow==='function'){
       _bindThinkingTailFollow(body, _worklogDetailBodyAtTail(body));
+    }
+    if(body._thinkingTailFollow===true){
+      body.scrollTop=Math.max(0,(Number(body.scrollHeight)||0)-(Number(body.clientHeight)||0));
     }
   };
   if(typeof body.addEventListener==='function') body.addEventListener('transitionend', settle);
@@ -12693,8 +12695,13 @@ function _setTransparentCardOpen(card, open){
   if(expanded&&row&&row.getAttribute('data-transparent-detail-deferred')==='1'){
     _materializeTransparentToolDetail(row);
   }
+  const wasOpen=!!(card.classList&&card.classList.contains('open'));
   card.classList.toggle('open',expanded);
-  if(expanded&&typeof _thinkingCardOpened==='function') _thinkingCardOpened(card);
+  // Arm follow-state settling only on a real closed→open transition. The
+  // rehydrate path re-applies the current open state on every refresh; arming
+  // there would schedule a delayed pin on an already-open card that can fire
+  // after the reader scrolled up (#7988 review).
+  if(expanded&&!wasOpen&&typeof _thinkingCardOpened==='function') _thinkingCardOpened(card);
   if(row) row.setAttribute('data-expanded',expanded?'1':'0');
   const header=card.querySelector('.tool-card-header,.thinking-card-header');
   if(header) header.setAttribute('aria-expanded',expanded?'true':'false');
