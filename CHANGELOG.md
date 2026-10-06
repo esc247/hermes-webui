@@ -5,6 +5,15 @@
 
 ### Added
 
+- **Extensions can add a small action to each message without touching transcript DOM.** A new
+  `ext.messages.registerAction({ id, label, icon, roles, getPressed, onInvoke })` on the boot-trusted extension handle
+  lets an extension put a Core-rendered `pin`, `bookmark` or `star` button after the built-in actions on settled user
+  and assistant messages, with an `aria-pressed` toggle state, a pending state while the action runs, and a page-wide
+  limit of two actions. Core keeps the row identity, pagination offset, cache restore, virtualization, disable and
+  uninstall in step, and re-resolves the message at click time so a stale button fails closed. Without an extension
+  using it nothing changes on screen, and the transcript render skips the slot work entirely. Documented in
+  `docs/EXTENSIONS.md`. Thanks @franksong2702. (#7245 by @franksong2702)
+
 - **Per-job "Tasks badge" toggle for scheduled jobs.** A new checkbox in the cron edit form (default on) controls
   whether that job's completions count toward the Tasks unread badge and new-run marker, so a high-frequency
   silent job (a sync or heartbeat) no longer keeps the badge lit. It mirrors the existing per-job "Completion
@@ -104,6 +113,35 @@
   @laitekin. (#7297, fixes #7294)
 
 ### Fixed
+
+- **Docker installs on the Experimental channel now get the update notice.** Docker images have no `.git`, so their
+  update check falls back to comparing the baked version with published release tags, and that fallback only knew
+  stable `v*` tags: an `:experimental` image never saw a newer `exp-v*` release. The check is now channel-aware: it
+  reads `exp-v*` tags for the Experimental channel (paginated, with a page cap; release candidates and suffixed tags are
+  ignored), also counts the experimental releases ahead of a stable image whose user picked Experimental, and the
+  notice shows `docker pull …:experimental` instead of `:latest`. In a mixed install the Agent's update recovery
+  buttons stay usable while the WebUI notice is shown. Thanks @pxxD1998. (#8040 by @pxxD1998)
+
+- **Gateway chats no longer replay reasoning-only replies or stale recovered prompts as history.** Following #8035,
+  the Gateway runs-API history now also leaves out an assistant reply that carried only reasoning (it went out as
+  empty assistant content) and a prompt WebUI restored after an interrupted turn, unless that prompt is the question
+  its answer replies to. Both backends now use one rule for restored prompts; it also keeps a first turn that was
+  interrupted by a restart together with its answer, which the in-process path used to drop. Thanks @ybai08.
+  (#8039 by @ybai08, fixes #8038)
+
+- **Pinning is limited per profile, not across all profiles.** Three pinned conversations in one profile used to use
+  up the pin limit for every other profile, so the first pin in a second profile failed. The pin limit now counts
+  only the pinned conversations owned by the target conversation's profile (root-profile aliases of `default` share
+  one allowance), a profile-listing failure no longer blocks a first pin when the limit can't be reached, and an
+  empty pinned placeholder can no longer be moved into another profile by a chat or `/goal` from that profile while
+  the pin is being admitted. Thanks @starship-s. (#7823 by @starship-s)
+
+- **Gateway chats no longer replay error notices or empty cut-off replies as conversation history.** With the
+  Gateway backend, the history sent to the agent for the next turn included the provider-error and cancel notices
+  shown in the transcript (as if the assistant had said them) and reasoning-only or tool-only partial replies as
+  empty assistant turns, which strict providers can reject. The Gateway path now drops exactly the rows the
+  in-process path already skips, through one shared check, so both backends send the same history for these rows.
+  Thanks @ybai08. (#8035 by @ybai08, fixes #8034)
 
 - **The sidebar resize handle keeps the drag with the pointer that started it.** A second pointer (a pen or a second mouse) pressing the handle mid-drag used to take over the resize, so the panel jumped to follow it and the original pointer's moves and release were ignored. The original pointer now owns the drag until it releases, and the stored group-collapse snapshot accepts only true/false values, so a malformed or hand-edited value can't keep a group collapsed or change the collapse map's prototype. Thanks @someaka. (#8028 by @someaka)
 
