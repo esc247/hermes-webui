@@ -35,6 +35,11 @@
 
 ### Performance
 
+- **Very long conversations no longer stall on the model-context step after a reply.** Following #8072, the
+  second comparison during settlement (which keeps the model's context free of replayed blocks and repeated
+  summaries) is now linear too. 2,000 rows take about 0.3 seconds instead of over a minute, and a 66,666-row
+  conversation settles in seconds, with byte-identical results. Thanks @hejuntt1014. (#8076, fixes #8073)
+
 - **Long conversations settle a reply much faster.** Finishing a stream compared the new transcript rows with the
   saved ones in time that grew with the square of the conversation length, while holding the conversation's lock.
   A 66,666-message transcript could stay stuck for over 90 minutes, with opening or stopping the chat waiting
@@ -121,6 +126,17 @@
   @laitekin. (#7297, fixes #7294)
 
 ### Fixed
+
+- **The Hermes dashboard link works when the dashboard is served under a sub-path.** A dashboard URL such as
+  `https://host/hermes/` is now accepted and opened with its path (and its trailing slash) intact, instead of being
+  rejected or cut back to the host. Backslashes and their encoded forms are still refused, and the server-side
+  reachability probe still targets the host only. Thanks @webtecnica. (#7909, fixes #7844)
+
+- **Work you stopped survives a restart.** When you press Stop, the partial reply and its tool cards are saved, and
+  they now come back intact after the server restarts, on reload, in copies and branches, and in later turns. That
+  includes conversations where Gateway questions were queued around the Stop, and older conversations recovered
+  from the run journal. The cancelled output stays out of the model's history for later turns. Thanks
+  @franksong2702. (#7829)
 
 - **The native Windows launcher starts on Agent-managed installs again.** `start.ps1` found the hermes-agent folder
   but never passed it to the server process, so the server could not load the Agent's dependencies and exited before
