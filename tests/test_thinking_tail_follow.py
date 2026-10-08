@@ -139,8 +139,10 @@ class FakeElement {
   }
   // Simulate a native scroll event (user drag or programmatic settle).
   fireScroll(){ (this._listeners['scroll']||[]).forEach(fn=>fn({type:'scroll',target:this})); }
-  // Simulate the end of the card open transition (layout is now stable).
-  fireTransitionEnd(){ (this._listeners['transitionend']||[]).forEach(fn=>fn({type:'transitionend',target:this})); }
+  // Simulate the end of the card open transition. Real cards animate both
+  // opacity and max-height; only max-height marks a stable layout, so the
+  // property is explicit here (#7988 review).
+  fireTransitionEnd(propertyName='max-height'){ (this._listeners['transitionend']||[]).slice().forEach(fn=>fn({type:'transitionend',target:this,propertyName})); }
 }
 
 function matchesSelector(el, selector){
@@ -508,6 +510,98 @@ const out={};
   out.s13_scroll_after_settle=c.body.scrollTop;
 }
 
+// ── S14: a delta landing INSIDE the open window must not pin ────────────────
+{
+  // Reviewer repro: open long reasoning, wheel up at scrollTop 0, then a delta
+  // arrives before transitionend. The old head jumped 0 -> 992.
+  const {row,card,body}=makeThinkingRow('thinking', true);
+  card.classList.remove('open');
+  body.clientHeight=0;
+  body.scrollHeight=1000;
+  _toggleThinkingCard(card);
+  out.s14_settling=body._thinkingTailSettling===true;
+  body.clientHeight=200;
+  body.scrollTop=0;
+  // Deltas during the settle window: none may move the reader.
+  _renderThinkingInto(row,'thinking grew during the open animation');
+  out.s14_scroll_mid_animation=body.scrollTop;
+  _renderThinkingInto(row,'thinking grew again during the open animation');
+  out.s14_scroll_mid_animation_2=body.scrollTop;
+  out.s14_latch_mid=String(body._thinkingTailFollow);
+  body.fireTransitionEnd();
+  out.s14_settling_cleared=body._thinkingTailSettling===false;
+  out.s14_scroll_after_settle=body.scrollTop;
+}
+
+// ── S15: settle ignores the opacity transition, waits for max-height ────────
+{
+  // opacity ends ~173ms, max-height ~222ms. Measuring on opacity reads a
+  // mid-animation height and strands a card that fits on HOLD.
+  const {row,card,body}=makeThinkingRow('thinking', true);
+  card.classList.remove('open');
+  body.clientHeight=0;
+  body.scrollHeight=1000;
+  _toggleThinkingCard(card);
+  // The opacity transition finishes first — it must NOT settle the card.
+  body.fireTransitionEnd('opacity');
+  out.s15_still_settling_after_opacity=body._thinkingTailSettling===true;
+  out.s15_latch_after_opacity=String(body._thinkingTailFollow);
+  // Layout is only stable once max-height ends; now the card fits.
+  body.clientHeight=1000;
+  body.fireTransitionEnd('max-height');
+  out.s15_settled=body._thinkingTailSettling===false;
+  out.s15_latch_after_maxheight=String(body._thinkingTailFollow);
+  body.clientHeight=200;
+  body.scrollHeight=1400;
+  _renderThinkingInto(row,'thinking grew after a proper settle');
+  out.s15_follows_after_settle=body.scrollTop;
+}
+
+// ── S16: quick re-toggle does not strand a live card on hold ───────────────
+{
+  // Open, close inside the open animation, reopen. The close transition's
+  // transitionend used to measure a collapsed body and seed HOLD forever.
+  const {row,card,body}=makeThinkingRow('thinking', true);
+  card.classList.remove('open');
+  body.clientHeight=0;
+  body.scrollHeight=400;
+  _toggleThinkingCard(card);
+  _toggleThinkingCard(card);
+  out.s16_closed=!card.classList.contains('open');
+  // The stale settle from the first open fires against a collapsed body.
+  body.fireTransitionEnd();
+  out.s16_latch_after_stale_settle=String(body._thinkingTailFollow);
+  // Reopening re-arms and seeds from a real layout.
+  _toggleThinkingCard(card);
+  body.clientHeight=400;
+  body.fireTransitionEnd();
+  out.s16_latch_after_reopen=String(body._thinkingTailFollow);
+  body.clientHeight=200;
+  body.scrollHeight=800;
+  _renderThinkingInto(row,'thinking grew after the re-toggle');
+  out.s16_follows_after_reopen=body.scrollTop;
+}
+
+// ── S17: opening SETTLED history never binds follow state ──────────────────
+{
+  // Reviewer repro: open a history card, scroll to its bottom, reflow
+  // 1280 -> 390, re-render. This head jumped 2460 -> 5430; master kept 2460.
+  const {row,card,body}=makeThinkingRow('thinking', false);
+  card.classList.remove('open');
+  body.clientHeight=0;
+  body.scrollHeight=3000;
+  _toggleThinkingCard(card);
+  body.clientHeight=540;
+  body.fireTransitionEnd();
+  out.s17_latch=String(body._thinkingTailFollow);
+  out.s17_settling=String(body._thinkingTailSettling);
+  // Narrow reflow makes the same text taller; a settled card must not chase it.
+  body.scrollTop=2460;
+  body.scrollHeight=6000;
+  _renderThinkingInto(row,'thinking');
+  out.s17_scroll_after_reflow=body.scrollTop;
+}
+
 console.log(JSON.stringify(out, null, 2));
 """
 
@@ -663,6 +757,59 @@ def test_no_delayed_pin_after_scroll_up_and_no_rearm_when_open():
     # A scroll-up between arm and settle wins over the armed pin.
     assert out["s13_latch_after_scrollup"] == "held"
     assert out["s13_scroll_after_settle"] == 0
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_delta_during_the_open_animation_does_not_pin_a_holding_reader():
+    out = _run_scenarios()
+
+    # The open window is published so both writers can stand down.
+    assert out["s14_settling"] is True
+    # Deltas arriving before the layout is stable must not move the reader.
+    assert out["s14_scroll_mid_animation"] == 0
+    assert out["s14_scroll_mid_animation_2"] == 0
+    # No latch is seeded while settling, so nothing can claim "following".
+    assert out["s14_latch_mid"] == "undefined"
+    # Once max-height ends the window closes and the real position decides.
+    assert out["s14_settling_cleared"] is True
+    assert out["s14_scroll_after_settle"] == 0
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_settle_waits_for_max_height_not_opacity():
+    out = _run_scenarios()
+
+    # opacity finishes first and must be ignored: settling stays armed.
+    assert out["s15_still_settling_after_opacity"] is True
+    assert out["s15_latch_after_opacity"] == "undefined"
+    # max-height marks a stable layout: a card that fits seeds follow, not hold.
+    assert out["s15_settled"] is True
+    assert out["s15_latch_after_maxheight"] == "true"
+    assert out["s15_follows_after_settle"] == 1200
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_quick_retoggle_does_not_strand_a_live_card_on_hold():
+    out = _run_scenarios()
+
+    assert out["s16_closed"] is True
+    # The stale settle fires against a collapsed body: it must not seed HOLD.
+    assert out["s16_latch_after_stale_settle"] == "undefined"
+    # Reopening measures a real layout and resumes following.
+    assert out["s16_latch_after_reopen"] == "true"
+    assert out["s16_follows_after_reopen"] == 600
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_opening_settled_history_never_binds_follow_state():
+    out = _run_scenarios()
+
+    # Opening a settled card must leave it completely unbound...
+    assert out["s17_latch"] == "undefined"
+    assert out["s17_settling"] == "undefined"
+    # ...so a 1280->390 reflow keeps the reader's position instead of chasing
+    # the new taller tail.
+    assert out["s17_scroll_after_reflow"] == 2460
 
 
 @pytest.mark.skipif(NODE is None, reason="node not on PATH")

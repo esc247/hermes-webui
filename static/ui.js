@@ -12516,11 +12516,30 @@ function _thinkingCardOpened(card){
   // then the latch stays unset and no write may pin (follow requires ===true).
   const body=card&&card.querySelector?card.querySelector('.thinking-card-body'):null;
   if(!body) return;
+  // Settled history must never acquire follow state: capture trusts the latch
+  // over the real position, so binding here makes a persisted card jump to the
+  // bottom on any later re-render (e.g. a 1280->390 reflow) (#7988 review).
+  const row=body.closest?body.closest('.msg,.thinking-row,[data-live-thinking-row]'):null;
+  if(typeof _thinkingRowIsLive==='function'&&!_thinkingRowIsLive(row||card)) return;
   let done=false;
-  const settle=()=>{
+  // Published so both tail writers can exclude a body whose open animation is
+  // still running: a delta landing inside the settle window must not pin a
+  // reader who is holding at the top (#7988 review).
+  body._thinkingTailSettling=true;
+  const settle=(ev)=>{
+    // Any transitionend on the body fires this, but opacity finishes well
+    // before max-height — measuring then reads a mid-animation height and
+    // seeds HOLD on a card that actually fits (#7988 review).
+    if(ev&&ev.propertyName&&ev.propertyName!=='max-height') return;
+    if(ev&&ev.target&&ev.target!==body) return;
     if(done) return;
     done=true;
+    body._thinkingTailSettling=false;
     if(typeof body.removeEventListener==='function') body.removeEventListener('transitionend', settle);
+    // Closed again before the transition finished (quick re-toggle): leave the
+    // latch untouched so the reopen re-arms and seeds from a real layout,
+    // instead of stranding a live card on a collapsed-body measurement.
+    if(card&&card.classList&&!card.classList.contains('open')) return;
     // Re-check at fire time, not at arm time: a scroll between open and
     // settle (or a refresh that re-armed this on an already-open card) must
     // not yank the reader (#7988 review). Seed only if still unset, pin only
@@ -14910,8 +14929,11 @@ function _refreshTransparentThinkingLiveRow(existing, node){
   const thinkingLive = typeof _thinkingRowIsLive==='function'?_thinkingRowIsLive(existing):true;
   const thinkingCard = thinkingBody&&thinkingBody.closest?thinkingBody.closest('.thinking-card'):null;
   const thinkingOpen = !thinkingCard||(thinkingCard.classList&&thinkingCard.classList.contains('open'));
-  if(thinkingBody&&thinkingLive&&thinkingOpen&&typeof _bindThinkingTailFollow==='function') _bindThinkingTailFollow(thinkingBody);
-  const thinkingFollow = thinkingBody&&thinkingLive&&thinkingOpen&&thinkingBody._thinkingTailFollow===true;
+  // A body still running its open animation is excluded: seeding or pinning
+  // inside that window yanks a reader holding at the top (#7988 review).
+  const thinkingSettling = !!(thinkingBody&&thinkingBody._thinkingTailSettling);
+  if(thinkingBody&&thinkingLive&&thinkingOpen&&!thinkingSettling&&typeof _bindThinkingTailFollow==='function') _bindThinkingTailFollow(thinkingBody);
+  const thinkingFollow = thinkingBody&&thinkingLive&&thinkingOpen&&!thinkingSettling&&thinkingBody._thinkingTailFollow===true;
   const nextText = String(nodePre.textContent || '');
   if(existingPre.textContent !== nextText){
     existingPre.textContent = nextText;
@@ -21722,8 +21744,11 @@ function _renderThinkingInto(row,text=''){
     // in _toggleThinkingCard.
     const card=body&&body.closest?body.closest('.thinking-card'):null;
     const open=!card||(card.classList&&card.classList.contains('open'));
-    if(body&&live&&open&&typeof _bindThinkingTailFollow==='function') _bindThinkingTailFollow(body);
-    const follow=body&&live&&open&&body._thinkingTailFollow===true;
+    // A body still running its open animation is excluded: seeding or pinning
+    // inside that window yanks a reader holding at the top (#7988 review).
+    const settling=!!(body&&body._thinkingTailSettling);
+    if(body&&live&&open&&!settling&&typeof _bindThinkingTailFollow==='function') _bindThinkingTailFollow(body);
+    const follow=body&&live&&open&&!settling&&body._thinkingTailFollow===true;
     const changed=pre.textContent!==clean;
     pre.textContent=clean;
     if(follow&&changed) body.scrollTop=Math.max(0,(Number(body.scrollHeight)||0)-(Number(body.clientHeight)||0));
