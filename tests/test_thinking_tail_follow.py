@@ -602,6 +602,62 @@ const out={};
   out.s17_scroll_after_reflow=body.scrollTop;
 }
 
+// ── S18: a stale settle timer from a previous open is a no-op ──────────────
+{
+  // Reviewer repro: close and quickly reopen; the FIRST open's timer fires
+  // while the second open is still animating. It used to measure a collapsed
+  // body, seed HOLD, and strand a card that fits when fully open.
+  const {row,card,body}=makeThinkingRow('thinking', true);
+  card.classList.remove('open');
+  body.clientHeight=0;
+  body.scrollHeight=1000;
+  _toggleThinkingCard(card);   // open #1
+  _toggleThinkingCard(card);   // close before the transition ends
+  _toggleThinkingCard(card);   // reopen (supersedes open #1's settle window)
+  // The stale timer from open #1 fires mid-animation of the current open —
+  // only that stale settle runs now (the current transition is still going).
+  body.clientHeight=0;
+  const stale=(body._listeners['transitionend']||[])[0];
+  if(stale) stale({type:'transitionend',target:body,propertyName:'max-height'});
+  out.s18_latch_after_stale=String(body._thinkingTailFollow);
+  out.s18_still_settling=body._thinkingTailSettling===true;
+  // The current open's transition finishes: the card fits, so it follows.
+  body.clientHeight=1000;
+  body.fireTransitionEnd('max-height');
+  out.s18_latch_after_real=String(body._thinkingTailFollow);
+  body.clientHeight=200;
+  body.scrollHeight=1200;
+  _renderThinkingInto(row,'thinking grew after the quick reopen');
+  out.s18_follows=body.scrollTop;
+}
+
+// ── S19: a COMPLETED card keeps no follow state across capture/restore ─────
+{
+  // Reviewer repro: follow live reasoning -> complete -> narrow 1280->390 ->
+  // re-render. The completed body still carries its streaming latch, and
+  // capture/restore used to trust it, jumping 2790 -> 6090. A settled
+  // destination restores its saved absolute offset instead.
+  const {row,body}=makeThinkingRow('thinking');   // live while streaming
+  body.scrollHeight=800;
+  body.scrollTop=780;
+  _bindThinkingTailFollow(body);
+  body.fireScroll();
+  // Completion strips the live markers (settlement demotion).
+  row.removeAttribute('data-live-thinking-row');
+  row.removeAttribute('data-live-thinking');
+  row.removeAttribute('data-thinking-active');
+  const state=_captureWorklogDetailDisclosureState(row);
+  const entry=state.get('thinking::k1#0');
+  out.s19_snap_has_atbottom=!!(entry&&('atBottom' in entry));
+  out.s19_snap_scrolltop=entry?entry.scrollTop:null;
+  // Rebuild of the completed card after a 1280->390 reflow (content taller).
+  const rebuilt=makeThinkingRow('thinking', false);
+  rebuilt.body.scrollHeight=6000;
+  _restoreWorklogDetailDisclosureState(rebuilt.row,state);
+  out.s19_rebuild_scroll=rebuilt.body.scrollTop;
+  out.s19_rebuild_latch=String(rebuilt.body._thinkingTailFollow);
+}
+
 console.log(JSON.stringify(out, null, 2));
 """
 
@@ -810,6 +866,33 @@ def test_opening_settled_history_never_binds_follow_state():
     # ...so a 1280->390 reflow keeps the reader's position instead of chasing
     # the new taller tail.
     assert out["s17_scroll_after_reflow"] == 2460
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_stale_settle_timer_from_a_previous_open_is_a_noop():
+    out = _run_scenarios()
+
+    # The stale timer fires mid-animation of the current open: it must not
+    # seed HOLD on a card that will fit when fully open...
+    assert out["s18_latch_after_stale"] == "undefined"
+    # ...nor clear the new open's settling window.
+    assert out["s18_still_settling"] is True
+    # The current transition settles normally and the card follows.
+    assert out["s18_latch_after_real"] == "true"
+    assert out["s18_follows"] == 1000
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_completed_card_keeps_no_follow_state_across_capture_restore():
+    out = _run_scenarios()
+
+    # Capture must ignore the latch a completed body inherited from streaming.
+    assert out["s19_snap_has_atbottom"] is False
+    assert out["s19_snap_scrolltop"] == 780
+    # The settled destination restores its saved absolute offset instead of
+    # chasing the new tail of the reflowed content.
+    assert out["s19_rebuild_scroll"] == 780
+    assert out["s19_rebuild_latch"] == "undefined"
 
 
 @pytest.mark.skipif(NODE is None, reason="node not on PATH")

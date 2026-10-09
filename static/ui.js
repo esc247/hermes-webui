@@ -12966,8 +12966,19 @@ function _thinkingCardOpened(card){
   // Published so both tail writers can exclude a body whose open animation is
   // still running: a delta landing inside the settle window must not pin a
   // reader who is holding at the top (#7988 review).
+  // Each open supersedes the previous one's settle window. Without this, a
+  // stale timer from an earlier open (quick close+reopen) fires mid-animation
+  // of the current open and strands a card that will fit on HOLD (#7988
+  // review). A stale settle is a complete no-op: it must not clear the new
+  // settling flag or seed anything.
+  body._thinkingTailSettleGen=(Number(body._thinkingTailSettleGen)||0)+1;
+  const gen=body._thinkingTailSettleGen;
   body._thinkingTailSettling=true;
   const settle=(ev)=>{
+    if(gen!==body._thinkingTailSettleGen){
+      if(typeof body.removeEventListener==='function') body.removeEventListener('transitionend', settle);
+      return;
+    }
     // Any transitionend on the body fires this, but opacity finishes well
     // before max-height — measuring then reads a mid-animation height and
     // seeds HOLD on a card that actually fits (#7988 review).
@@ -13053,8 +13064,13 @@ function _captureWorklogDetailDisclosureState(root){
     const body=_worklogDetailScrollableBody(el);
     // atBottom is tail-follow state and is recorded ONLY for live thinking
     // bodies that participate in tail-follow. Tool-card details and settled
-    // thinking cards keep master's plain absolute-offset restore.
-    const participates=!!(body&&body.classList&&body.classList.contains('thinking-card-body')&&body._thinkingTailFollow!==undefined);
+    // thinking cards keep master's plain absolute-offset restore. Liveness is
+    // part of the gate: a completed card keeps its streaming latch, and
+    // trusting that latch in capture would jump settled history on any later
+    // re-render (#7988 review).
+    const rowForLiveness=el.closest?el.closest('.agent-activity-thinking,.thinking-card-row,.thinking-row'):null;
+    const rowLive=typeof _thinkingRowIsLive==='function'?_thinkingRowIsLive(rowForLiveness):true;
+    const participates=!!(body&&body.classList&&body.classList.contains('thinking-card-body')&&body._thinkingTailFollow!==undefined&&rowLive);
     const snap={
       open:_worklogDetailDisclosureIsOpen(el),
       scrollTop:body?Math.max(0,Number(body.scrollTop)||0):0,
@@ -13079,8 +13095,12 @@ function _restoreWorklogDetailDisclosureState(root, state){
     // Only snapshots that carried tail-follow state (participating live
     // thinking bodies) bind the rebuilt body; everything else — tool details,
     // settled cards, legacy boolean snapshots — keeps master's plain
-    // absolute-offset restore with no follow latch.
-    const hasFollow=!!(saved&&typeof saved==='object'&&'atBottom' in saved);
+    // absolute-offset restore with no follow latch. The DESTINATION row must
+    // be live too: a settled destination ignores atBottom and restores its
+    // saved absolute offset (#7988 review).
+    const destRow=el.closest?el.closest('.agent-activity-thinking,.thinking-card-row,.thinking-row'):null;
+    const destLive=typeof _thinkingRowIsLive==='function'?_thinkingRowIsLive(destRow):true;
+    const hasFollow=!!(destLive&&saved&&typeof saved==='object'&&'atBottom' in saved);
     const atBottom=hasFollow&&saved.atBottom===true;
     if(open){
       const body=_worklogDetailScrollableBody(el);
