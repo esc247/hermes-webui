@@ -96,6 +96,12 @@ it, so a reader who opens a long card and scrolls up is never yanked to the
 bottom by text arriving mid-animation. A card closed again before the animation
 ends stays unbound and re-measures on the next open.
 
+Follow intent survives rebuilds in both directions: a collapsed following card
+carries its latch across a scene-update rebuild and resumes follow when reopened
+(never re-measured at its top and put on hold), and a rebuild that interrupts a
+card's very first open lets the replacement body finish the open — it seeds
+follow state from its real position instead of staying follow-less.
+
 Automatic compression is a live-only context barrier, not a special branded
 tool card. Render it as a centered, non-interactive divider with quiet horizontal
 rules: `Compressing context` while the compression barrier is active and

@@ -13102,15 +13102,19 @@ function _restoreWorklogDetailDisclosureState(root, state){
     const destLive=typeof _thinkingRowIsLive==='function'?_thinkingRowIsLive(destRow):true;
     const hasFollow=!!(destLive&&saved&&typeof saved==='object'&&'atBottom' in saved);
     const atBottom=hasFollow&&saved.atBottom===true;
+    const body=_worklogDetailScrollableBody(el);
+    // Follow intent is restored for live destinations whether or not the card
+    // is open: a collapsed following card must resume follow on reopen, not be
+    // re-measured at its top and put on hold (#7988 review). Nothing scrolls
+    // while closed — only the latch is carried.
+    if(body&&hasFollow&&typeof _bindThinkingTailFollow==='function') _bindThinkingTailFollow(body, atBottom);
     if(open){
-      const body=_worklogDetailScrollableBody(el);
       if(body){
         // Carry the captured follow/hold intent across the rebuild (seeded
         // WITH its scroll listener so later reader movement still counts) and
         // re-pin tail readers to the NEW bottom — content may have grown while
         // the DOM was rebuilt. Readers who had scrolled up get their absolute
         // offset replayed.
-        if(hasFollow&&typeof _bindThinkingTailFollow==='function') _bindThinkingTailFollow(body, atBottom);
         // The re-pin reads scrollHeight; skip it on a collapsed card (the tail
         // read forces a layout) — _toggleThinkingCard re-pins on open.
         const elOpen=!el.classList||el.classList.contains('open');
@@ -13118,6 +13122,14 @@ function _restoreWorklogDetailDisclosureState(root, state){
           body.scrollTop=Math.max(0, body.scrollHeight-body.clientHeight);
         }else if(Number.isFinite(scrollTop)&&scrollTop>0){
           body.scrollTop=Math.min(scrollTop, Math.max(0, body.scrollHeight-body.clientHeight));
+        }
+        // A live body whose follow state was never established — the first
+        // open was interrupted by this very rebuild and its settle window died
+        // with the old body — must finish opening, or it stays follow-less
+        // forever (#7988 review). _thinkingCardOpened arms the settle window
+        // on the REPLACEMENT body so it seeds from its real position.
+        if(destLive&&body.classList&&body.classList.contains('thinking-card-body')&&body._thinkingTailFollow===undefined&&typeof _thinkingCardOpened==='function'){
+          _thinkingCardOpened(el);
         }
       }
     }

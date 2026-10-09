@@ -658,6 +658,62 @@ const out={};
   out.s19_rebuild_latch=String(rebuilt.body._thinkingTailFollow);
 }
 
+// ── S20: a collapsed following card resumes follow after a rebuild ─────────
+{
+  // Greptile P1: capture saved atBottom but restore bound only OPEN bodies, so
+  // reopening the rebuilt card measured its top and put it on hold.
+  const {row,card,body}=makeThinkingRow('thinking');   // live
+  card.classList.remove('open');
+  body.scrollHeight=800;
+  body.scrollTop=600;
+  _bindThinkingTailFollow(body, true);   // was following when collapsed
+  const state=_captureWorklogDetailDisclosureState(row);
+  const entry=state.get('thinking::k1#0');
+  out.s20_snap=entry?{open:entry.open,atBottom:entry.atBottom}:null;
+  // Scene update rebuilds the collapsed card (content grew).
+  const rebuilt=makeThinkingRow('thinking grown while rebuilt');
+  rebuilt.card.classList.remove('open');
+  rebuilt.body.scrollHeight=1200;
+  _restoreWorklogDetailDisclosureState(rebuilt.row,state);
+  out.s20_latch_while_closed=String(rebuilt.body._thinkingTailFollow);
+  out.s20_scroll_while_closed=rebuilt.body.scrollTop;
+  // Reopening resumes follow at the new tail instead of seeding HOLD.
+  _toggleThinkingCard(rebuilt.card);
+  rebuilt.body.clientHeight=1000;
+  rebuilt.body.fireTransitionEnd('max-height');
+  out.s20_latch_after_reopen=String(rebuilt.body._thinkingTailFollow);
+  out.s20_scroll_after_reopen=rebuilt.body.scrollTop;
+}
+
+// ── S21: a rebuild that interrupts the FIRST open finishes the open ────────
+{
+  // Greptile P1: capture omits atBottom while the latch is still unset (the
+  // settle window). The rebuild discards the armed body, restore reopened the
+  // replacement without arming anything, and the card stayed follow-less.
+  const {row,card,body}=makeThinkingRow('thinking');   // live
+  card.classList.remove('open');
+  body.clientHeight=0;
+  body.scrollHeight=1000;
+  _toggleThinkingCard(card);   // first open: settle armed, latch not set yet
+  out.s21_latch_during_open=String(body._thinkingTailFollow);
+  const state=_captureWorklogDetailDisclosureState(row);
+  const entry=state.get('thinking::k1#0');
+  out.s21_snap_has_atbottom=!!(entry&&('atBottom' in entry));
+  // Scene update rebuilds mid-open: the armed body is discarded.
+  const rebuilt=makeThinkingRow('thinking');
+  rebuilt.body.scrollHeight=1000;
+  _restoreWorklogDetailDisclosureState(rebuilt.row,state);
+  out.s21_armed_after_restore=rebuilt.body._thinkingTailSettling===true;
+  // The replacement finishes its open and seeds from its real position.
+  rebuilt.body.clientHeight=1000;
+  rebuilt.body.fireTransitionEnd('max-height');
+  out.s21_latch_after_settle=String(rebuilt.body._thinkingTailFollow);
+  rebuilt.body.clientHeight=200;
+  rebuilt.body.scrollHeight=1400;
+  _renderThinkingInto(rebuilt.row,'thinking grew after the rebuild');
+  out.s21_follows=rebuilt.body.scrollTop;
+}
+
 console.log(JSON.stringify(out, null, 2));
 """
 
@@ -893,6 +949,36 @@ def test_completed_card_keeps_no_follow_state_across_capture_restore():
     # chasing the new tail of the reflowed content.
     assert out["s19_rebuild_scroll"] == 780
     assert out["s19_rebuild_latch"] == "undefined"
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_collapsed_following_card_resumes_follow_after_rebuild():
+    out = _run_scenarios()
+
+    # Capture keeps the intent of a collapsed following card...
+    assert out["s20_snap"] == {"open": False, "atBottom": True}
+    # ...restore carries the latch onto the closed body without scrolling it...
+    assert out["s20_latch_while_closed"] == "true"
+    assert out["s20_scroll_while_closed"] == 0
+    # ...and reopening resumes follow at the new tail instead of seeding HOLD.
+    assert out["s20_latch_after_reopen"] == "true"
+    assert out["s20_scroll_after_reopen"] == 200
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH")
+def test_rebuild_that_interrupts_the_first_open_finishes_the_open():
+    out = _run_scenarios()
+
+    # The latch is not established yet during the settle window...
+    assert out["s21_latch_during_open"] == "undefined"
+    # ...so capture legitimately omits atBottom.
+    assert out["s21_snap_has_atbottom"] is False
+    # Restore re-arms the open on the replacement body instead of leaving it
+    # follow-less forever.
+    assert out["s21_armed_after_restore"] is True
+    assert out["s21_latch_after_settle"] == "true"
+    # Growth after the rebuild is followed again.
+    assert out["s21_follows"] == 1200
 
 
 @pytest.mark.skipif(NODE is None, reason="node not on PATH")
